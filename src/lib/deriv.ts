@@ -312,7 +312,10 @@ export async function authorizeDeriv(rawToken: string): Promise<DerivAuthResult>
   const token = rawToken.trim();
   if (!token) throw new Error("Empty token");
   const accounts = await listDerivAccounts([token]);
-  return authorizeDerivAccount(accounts[0]);
+  const preferred = accounts.find((a) => a.isDemo) ?? accounts[0];
+  if (!preferred) throw new Error("No Deriv account found for this token");
+  return authorizeDerivAccount(preferred);
+
 }
 
 
