@@ -155,66 +155,169 @@ export class DerivWS {
   }
 }
 
-export async function authorizeDeriv(rawToken: string): Promise<DerivAuthResult> {
-  const token = rawToken.trim();
-  if (!token) throw new Error("Empty token");
+export interface DerivAccount {
+  /** loginid (legacy) or account_id (PAT) */
+  id: string;
+  currency: string;
+  balance: number;
+  isDemo: boolean;
+  mode: DerivMode;
+  /** token that grants access to this account */
+  token: string;
+}
 
-  const mode = detectTokenMode(token);
+function accountIsDemo(account: any, id: string): boolean {
+  if (account?.is_virtual === 1 || account?.is_virtual === true) return true;
+  const type = String(
+    account?.account_type ?? account?.type ?? account?.category ?? "",
+  ).toLowerCase();
+  if (type.includes("demo") || type.includes("virtual")) return true;
+  return /^vr/i.test(id);
+}
 
-  // ==================== LEGACY ====================
-  if (mode === "legacy") {
-    const ws = new DerivWS();
-    ws.mode = "legacy";
-    await ws.connect();
-    const auth = await ws.send<any>({ authorize: token });
-    if (!auth?.authorize) throw new Error("Invalid token (legacy)");
-    return {
-      ws,
-      loginid: auth.authorize.loginid,
-      currency: auth.authorize.currency || "USD",
-      balance: Number(auth.authorize.balance ?? 0),
-      mode,
-    };
-  }
-
-  // ==================== PAT ====================
-  // Step 1: Get accounts list via REST
+async function listPatAccounts(token: string): Promise<DerivAccount[]> {
   const accountsResponse = await derivRest<{ data?: any[] | any }>("/accounts", token, {
     method: "GET",
   });
 
-  const accounts = Array.isArray(accountsResponse.data)
+  const raw = Array.isArray(accountsResponse.data)
     ? accountsResponse.data
     : accountsResponse.data
       ? [accountsResponse.data]
       : [];
 
-  const account = accounts.find((a) => a?.status === "active") || accounts[0];
+  return raw
+    .map((a) => {
+      const id = String(a?.account_id || a?.id || a?.loginid || "");
+      if (!id) return null;
+      return {
+        id,
+        currency: String(a?.currency ?? "USD"),
+        balance: Number(a?.balance ?? 0),
+        isDemo: accountIsDemo(a, id),
+        mode: "pat" as DerivMode,
+        token,
+      };
+    })
+    .filter(Boolean) as DerivAccount[];
+}
 
-  const accountId = String(account?.account_id || account?.id || account?.loginid || "");
-  if (!accountId) throw new Error("No Deriv options account found for this PAT token");
+async function listLegacyAccounts(token: string): Promise<DerivAccount[]> {
+  const ws = new DerivWS();
+  ws.mode = "legacy";
+  await ws.connect();
+  try {
+    const auth = await ws.send<any>({ authorize: token });
+    if (!auth?.authorize) throw new Error("Invalid token (legacy)");
+    const a = auth.authorize;
+    // A legacy API token can only trade on the account it was created under,
+    // so we expose exactly that account. Paste a second token for the other
+    // account type (demo/real) to get both in the switcher.
+    return [
+      {
+        id: String(a.loginid),
+        currency: String(a.currency || "USD"),
+        balance: Number(a.balance ?? 0),
+        isDemo: accountIsDemo(a, String(a.loginid)),
+        mode: "legacy" as DerivMode,
+        token,
+      },
+    ];
+  } finally {
+    ws.close();
+  }
+}
 
-  // Step 2: Request OTP to get an authenticated WebSocket URL
+/** Fetch every account (demo and real) reachable with the given tokens. */
+export async function listDerivAccounts(tokens: string[]): Promise<DerivAccount[]> {
+  const unique = Array.from(new Set(tokens.map((t) => t.trim()).filter(Boolean)));
+  if (unique.length === 0) throw new Error("Enter your Deriv token first");
+
+  const results: DerivAccount[] = [];
+  const errors: string[] = [];
+
+  for (const token of unique) {
+    try {
+      const accounts =
+        detectTokenMode(token) === "pat"
+          ? await listPatAccounts(token)
+          : await listLegacyAccounts(token);
+      accounts.forEach((account) => {
+        if (!results.some((r) => r.id === account.id)) results.push(account);
+      });
+    } catch (error: any) {
+      errors.push(error?.message || "Token failed");
+    }
+  }
+
+  if (results.length === 0) {
+    throw new Error(errors[0] || "No Deriv accounts found for this token");
+  }
+
+  // Demo accounts first so the default selection is always a demo account.
+  return results.sort((a, b) => Number(b.isDemo) - Number(a.isDemo));
+}
+
+/** Open an authenticated socket for one specific account. */
+export async function authorizeDerivAccount(account: DerivAccount): Promise<DerivAuthResult> {
+  if (account.mode === "legacy") {
+    const ws = new DerivWS();
+    ws.mode = "legacy";
+    await ws.connect();
+    const auth = await ws.send<any>({ authorize: account.token });
+    if (!auth?.authorize) throw new Error("Invalid token (legacy)");
+    if (String(auth.authorize.loginid) !== account.id) {
+      ws.close();
+      throw new Error(
+        `This token belongs to ${auth.authorize.loginid}, not ${account.id}. Add a token created under ${account.id}.`,
+      );
+    }
+    return {
+      ws,
+      loginid: String(auth.authorize.loginid),
+      currency: String(auth.authorize.currency || "USD"),
+      balance: Number(auth.authorize.balance ?? 0),
+      mode: "legacy",
+    };
+  }
+
+  // PAT: request an OTP-authenticated WebSocket URL for this exact account.
   const otpResponse = await derivRest<{ data?: { url?: string; websocket_url?: string } }>(
-    `/accounts/${encodeURIComponent(accountId)}/otp`,
-    token,
+    `/accounts/${encodeURIComponent(account.id)}/otp`,
+    account.token,
     { method: "POST" },
   );
 
   const websocketUrl = String(otpResponse.data?.url || otpResponse.data?.websocket_url || "");
   if (!websocketUrl) throw new Error("Deriv PAT API did not return a WebSocket URL");
 
-  // Step 3: Connect directly using authenticated URL
   const ws = new DerivWS();
   ws.mode = "pat";
   await ws.connect(websocketUrl);
 
-  const balance = Number(account?.balance ?? 0);
-  const currency = String(account?.currency ?? "USD");
-  const loginid = accountId;
-
-  return { ws, loginid, currency, balance, mode };
+  return {
+    ws,
+    loginid: account.id,
+    currency: account.currency,
+    balance: account.balance,
+    mode: "pat",
+  };
 }
+
+export function accountLabel(account: DerivAccount) {
+  return `${account.isDemo ? "Demo" : "Real"} · ${account.id} · ${account.balance.toFixed(2)} ${account.currency}`;
+}
+
+export async function authorizeDeriv(rawToken: string): Promise<DerivAuthResult> {
+  const token = rawToken.trim();
+  if (!token) throw new Error("Empty token");
+  const accounts = await listDerivAccounts([token]);
+  const preferred = accounts.find((a) => a.isDemo) ?? accounts[0];
+  if (!preferred) throw new Error("No Deriv account found for this token");
+  return authorizeDerivAccount(preferred);
+
+}
+
 
 export const MARKETS: { symbol: string; label: string }[] = [
   { symbol: "1HZ10V", label: "Volatility 10 (1s) Index" },

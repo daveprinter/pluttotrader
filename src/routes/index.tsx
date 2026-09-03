@@ -43,7 +43,16 @@ import {
 import { DigitGrid } from "@/components/DigitGrid";
 import { cn } from "@/lib/utils";
 import { useInstallPrompt, usePersistentState, useTheme } from "@/hooks/usePluto";
-import { MARKETS, authorizeDeriv, marketLabel, type DerivWS } from "@/lib/deriv";
+import {
+  MARKETS,
+  accountLabel,
+  authorizeDerivAccount,
+  listDerivAccounts,
+  marketLabel,
+  type DerivAccount,
+  type DerivWS,
+} from "@/lib/deriv";
+
 import {
   BotEngine,
   emptyStats,
@@ -128,6 +137,13 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
 
   // connection
   const [token, setToken, tokenHydrated] = usePersistentState("token", "");
+  const [altToken, setAltToken] = usePersistentState("altToken", "");
+  const [accounts, setAccounts] = usePersistentState<DerivAccount[]>("accounts", []);
+  const [selectedAccountId, setSelectedAccountId, accountHydrated] = usePersistentState(
+    "selectedAccountId",
+    "",
+  );
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [loginid, setLoginid] = useState("");
@@ -135,6 +151,7 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
   const [balance, setBalance] = useState(0);
   const wsRef = useRef<DerivWS | null>(null);
   const engineRef = useRef<BotEngine | null>(null);
+
 
   // market
   const [symbol, setSymbol] = usePersistentState("symbol", "1HZ10V");
@@ -251,19 +268,30 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
     engineRef.current?.updateConfig(buildConfig());
   }, [buildConfig]);
 
-  const handleConnect = async () => {
-    if (!token.trim()) {
-      toast.error("Enter your Deriv PAT token first");
-      return;
-    }
+  const pickDefaultAccount = (list: DerivAccount[], preferredId?: string) =>
+    list.find((a) => a.id === preferredId) || list.find((a) => a.isDemo) || list[0];
+
+  const connectAccount = async (account: DerivAccount) => {
     setConnecting(true);
     try {
-      const auth = await authorizeDeriv(token);
+      engineRef.current?.destroy();
+      engineRef.current = null;
+      wsRef.current?.close();
+      setRunning(false);
+      setPaused(false);
+
+      const auth = await authorizeDerivAccount(account);
       wsRef.current = auth.ws;
       setConnected(true);
       setLoginid(auth.loginid);
       setCurrency(auth.currency);
       setBalance(auth.balance);
+      setSelectedAccountId(account.id);
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === account.id ? { ...a, balance: auth.balance, currency: auth.currency } : a,
+        ),
+      );
 
       const engine = new BotEngine(auth.ws, { ...buildConfig(), currency: auth.currency }, {
         onTick: (p, d) => {
@@ -296,7 +324,9 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
         setRunning(false);
         setStatus("Disconnected");
       };
-      toast.success(`Connected to ${auth.loginid}`);
+      toast.success(
+        `Connected to ${account.isDemo ? "demo" : "real"} account ${auth.loginid}`,
+      );
     } catch (error: any) {
       toast.error(error?.message || "Could not connect to Deriv");
     } finally {
@@ -304,15 +334,45 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
     }
   };
 
-  // Auto-reconnect with the saved token after a refresh or app restart.
+  /** Fetch demo + real accounts for the saved tokens, then connect the default. */
+  const handleConnect = async (autoConnect = true) => {
+    if (!token.trim() && !altToken.trim()) {
+      toast.error("Enter your Deriv token first");
+      return;
+    }
+    setLoadingAccounts(true);
+    try {
+      const list = await listDerivAccounts([token, altToken]);
+      setAccounts(list);
+      const target = pickDefaultAccount(list, selectedAccountId);
+      if (target && autoConnect) await connectAccount(target);
+      else if (target) setSelectedAccountId(target.id);
+    } catch (error: any) {
+      toast.error(error?.message || "Could not load your Deriv accounts");
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  const handleAccountChange = async (id: string) => {
+    const account = accounts.find((a) => a.id === id);
+    if (!account) return;
+    setSelectedAccountId(id);
+    if (running) toast.info("Stopping the bot to switch accounts");
+    await connectAccount(account);
+  };
+
+  // Auto-reconnect with the saved token/account after a refresh or app restart.
   const autoConnectedRef = useRef(false);
   useEffect(() => {
-    if (!tokenHydrated || autoConnectedRef.current) return;
-    if (!token.trim() || connected || connecting) return;
+    if (!tokenHydrated || !accountHydrated || autoConnectedRef.current) return;
+    if ((!token.trim() && !altToken.trim()) || connected || connecting) return;
     autoConnectedRef.current = true;
     void handleConnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenHydrated, token]);
+  }, [tokenHydrated, accountHydrated, token, altToken]);
+
+
 
 
   const handleMarketChange = async (next: string) => {
@@ -383,7 +443,9 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
           <div className="mr-auto">
             <h1 className="text-base font-bold leading-tight sm:text-lg">Pluto AI Trader</h1>
             <p className="text-xs text-muted-foreground">
-              {connected ? `${loginid} · ${balance.toFixed(2)} ${currency}` : "Not connected"}
+              {connected
+                ? `${accounts.find((a) => a.id === loginid)?.isDemo === false ? "Real" : "Demo"} · ${loginid} · ${balance.toFixed(2)} ${currency}`
+                : "Not connected"}
             </p>
           </div>
           <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
@@ -468,14 +530,50 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 type="password"
-                placeholder="Enter your Deriv PAT token"
+                placeholder="Enter your Deriv token (demo or PAT)"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
               />
-              <Button onClick={handleConnect} disabled={connecting}>
-                {connecting ? "Connecting…" : connected ? "Reconnect" : "Connect"}
+              <Button onClick={() => handleConnect()} disabled={connecting || loadingAccounts}>
+                {loadingAccounts
+                  ? "Loading accounts…"
+                  : connecting
+                    ? "Connecting…"
+                    : connected
+                      ? "Reconnect"
+                      : "Connect"}
               </Button>
             </div>
+            <Input
+              className="mt-2"
+              type="password"
+              placeholder="Optional: second token (e.g. real account API token)"
+              value={altToken}
+              onChange={(e) => setAltToken(e.target.value)}
+            />
+            {accounts.length > 0 && (
+              <div className="mt-3">
+                <Label className="mb-1.5 block text-xs">Account (demo is the default)</Label>
+                <Select value={selectedAccountId} onValueChange={handleAccountChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {accountLabel(a)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {accounts.some((a) => a.isDemo) && accounts.some((a) => !a.isDemo)
+                    ? "Demo and real accounts loaded — switch any time."
+                    : "Only one account type is reachable with these tokens. Add the other token above to switch."}
+                </p>
+              </div>
+            )}
+
             {connected && (
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <Stat label="Account" value={loginid} />
