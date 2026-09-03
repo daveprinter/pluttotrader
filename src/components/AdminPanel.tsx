@@ -304,7 +304,7 @@ export function AdminPanel({ open, onOpenChange }: { open: boolean; onOpenChange
     }
   };
 
-  const CODE_TTL_MS = 5 * 60_000;
+  const CODE_TTL_MS = 10 * 60_000;
   const RESEND_COOLDOWN_MS = 30_000;
   const remainingMs = codeSentAt ? Math.max(0, codeSentAt + CODE_TTL_MS - now) : 0;
   const cooldownMs = codeSentAt ? Math.max(0, codeSentAt + RESEND_COOLDOWN_MS - now) : 0;
