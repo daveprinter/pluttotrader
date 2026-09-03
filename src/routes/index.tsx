@@ -259,19 +259,30 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
     engineRef.current?.updateConfig(buildConfig());
   }, [buildConfig]);
 
-  const handleConnect = async () => {
-    if (!token.trim()) {
-      toast.error("Enter your Deriv PAT token first");
-      return;
-    }
+  const pickDefaultAccount = (list: DerivAccount[], preferredId?: string) =>
+    list.find((a) => a.id === preferredId) || list.find((a) => a.isDemo) || list[0];
+
+  const connectAccount = async (account: DerivAccount) => {
     setConnecting(true);
     try {
-      const auth = await authorizeDeriv(token);
+      engineRef.current?.destroy();
+      engineRef.current = null;
+      wsRef.current?.close();
+      setRunning(false);
+      setPaused(false);
+
+      const auth = await authorizeDerivAccount(account);
       wsRef.current = auth.ws;
       setConnected(true);
       setLoginid(auth.loginid);
       setCurrency(auth.currency);
       setBalance(auth.balance);
+      setSelectedAccountId(account.id);
+      setAccounts((prev) =>
+        prev.map((a) =>
+          a.id === account.id ? { ...a, balance: auth.balance, currency: auth.currency } : a,
+        ),
+      );
 
       const engine = new BotEngine(auth.ws, { ...buildConfig(), currency: auth.currency }, {
         onTick: (p, d) => {
@@ -304,7 +315,9 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
         setRunning(false);
         setStatus("Disconnected");
       };
-      toast.success(`Connected to ${auth.loginid}`);
+      toast.success(
+        `Connected to ${account.isDemo ? "demo" : "real"} account ${auth.loginid}`,
+      );
     } catch (error: any) {
       toast.error(error?.message || "Could not connect to Deriv");
     } finally {
@@ -312,15 +325,45 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
     }
   };
 
-  // Auto-reconnect with the saved token after a refresh or app restart.
+  /** Fetch demo + real accounts for the saved tokens, then connect the default. */
+  const handleConnect = async (autoConnect = true) => {
+    if (!token.trim() && !altToken.trim()) {
+      toast.error("Enter your Deriv token first");
+      return;
+    }
+    setLoadingAccounts(true);
+    try {
+      const list = await listDerivAccounts([token, altToken]);
+      setAccounts(list);
+      const target = pickDefaultAccount(list, selectedAccountId);
+      if (target && autoConnect) await connectAccount(target);
+      else if (target) setSelectedAccountId(target.id);
+    } catch (error: any) {
+      toast.error(error?.message || "Could not load your Deriv accounts");
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  const handleAccountChange = async (id: string) => {
+    const account = accounts.find((a) => a.id === id);
+    if (!account) return;
+    setSelectedAccountId(id);
+    if (running) toast.info("Stopping the bot to switch accounts");
+    await connectAccount(account);
+  };
+
+  // Auto-reconnect with the saved token/account after a refresh or app restart.
   const autoConnectedRef = useRef(false);
   useEffect(() => {
-    if (!tokenHydrated || autoConnectedRef.current) return;
-    if (!token.trim() || connected || connecting) return;
+    if (!tokenHydrated || !accountHydrated || autoConnectedRef.current) return;
+    if ((!token.trim() && !altToken.trim()) || connected || connecting) return;
     autoConnectedRef.current = true;
     void handleConnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenHydrated, token]);
+  }, [tokenHydrated, accountHydrated, token, altToken]);
+
+
 
 
   const handleMarketChange = async (next: string) => {
