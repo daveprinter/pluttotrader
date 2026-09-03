@@ -164,9 +164,13 @@ export const adminStart = createServerFn({ method: "POST" })
     const supabaseAdmin = await adminClient();
     const cfg = await loadConfig(supabaseAdmin);
 
+    if (!cfg.adminCode) {
+      return { ok: false, message: "No admin panel code is set. A code is required — set one before signing in." };
+    }
     if (data.code !== cfg.adminCode) {
       return { ok: false, message: "Wrong admin panel code." };
     }
+
 
     const token = crypto.randomUUID();
     const verification = sixDigitCode();
