@@ -489,6 +489,8 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
     const supabaseAdmin = await requireAdmin(data.token);
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.adminEmail)) return { ok: false, message: "Enter a valid admin email." };
+    if (!data.adminCode)
+      return { ok: false, message: "A code to open the admin panel is required — you must set one (4–8 digits)." };
     if (!/^\d{4,8}$/.test(data.adminCode)) return { ok: false, message: "Admin panel code must be 4–8 digits." };
     if (data.fallbackCode && !/^\d{4,8}$/.test(data.fallbackCode))
       return { ok: false, message: "Testing verification code must be 4–8 digits (or empty to disable)." };
