@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       admin_sessions: {
         Row: {
+          code_sent_at: string | null
           created_at: string
           expires_at: string
           id: string
@@ -24,6 +25,7 @@ export type Database = {
           verified: boolean
         }
         Insert: {
+          code_sent_at?: string | null
           created_at?: string
           expires_at?: string
           id?: string
@@ -32,6 +34,7 @@ export type Database = {
           verified?: boolean
         }
         Update: {
+          code_sent_at?: string | null
           created_at?: string
           expires_at?: string
           id?: string
