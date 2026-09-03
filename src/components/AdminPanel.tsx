@@ -67,10 +67,15 @@ function AdminSettingsCard({ token }: { token: string }) {
   const needsChoice = emailChanged && delivery === "resend" && !resendApiKey;
 
   const save = async () => {
+    if (!adminCode.trim()) {
+      toast.error("A code to open the admin panel is required — you must set one (4–8 digits).");
+      return;
+    }
     if (needsChoice) {
       toast.error("Pick how codes should reach the new email, or add a Resend key from that email's account.");
       return;
     }
+
     setBusy(true);
     try {
       const res = await adminUpdateSettings({
