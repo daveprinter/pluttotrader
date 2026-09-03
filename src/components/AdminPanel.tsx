@@ -67,10 +67,15 @@ function AdminSettingsCard({ token }: { token: string }) {
   const needsChoice = emailChanged && delivery === "resend" && !resendApiKey;
 
   const save = async () => {
+    if (!adminCode.trim()) {
+      toast.error("A code to open the admin panel is required — you must set one (4–8 digits).");
+      return;
+    }
     if (needsChoice) {
       toast.error("Pick how codes should reach the new email, or add a Resend key from that email's account.");
       return;
     }
+
     setBusy(true);
     try {
       const res = await adminUpdateSettings({
@@ -121,15 +126,18 @@ function AdminSettingsCard({ token }: { token: string }) {
             <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="set-admin-code">Admin panel code</Label>
+                  <Label htmlFor="set-admin-code">Admin panel code (required)</Label>
                   <Input
                     id="set-admin-code"
                     inputMode="numeric"
+                    required
                     value={adminCode}
                     onChange={(e) => setAdminCode(e.target.value.replace(/\D/g, ""))}
                     placeholder="0000"
                   />
-                  <p className="text-[11px] text-muted-foreground">Asked first, before the email code is sent.</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Asked first, before the email code is sent. Cannot be left empty.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="set-fallback-code">Testing verification code</Label>
@@ -141,9 +149,10 @@ function AdminSettingsCard({ token }: { token: string }) {
                     placeholder="Leave empty to disable"
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    Always accepted instead of the emailed code. Clear it for production.
+                    Always accepted instead of the emailed code. Clear it and only the real emailed code will work.
                   </p>
                 </div>
+
               </div>
 
               <div className="space-y-1.5">

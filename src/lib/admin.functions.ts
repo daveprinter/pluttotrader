@@ -74,13 +74,17 @@ async function loadConfig(supabaseAdmin: Awaited<ReturnType<typeof adminClient>>
     : "resend") as EmailDelivery;
   return {
     adminEmail: map["admin_email"] || ADMIN_EMAIL_DEFAULT,
-    adminCode: map["admin_code"] || ADMIN_CODE_DEFAULT,
+    // Only fall back to the built-in code when no code was ever configured.
+    // A blank saved value is invalid, never a wildcard.
+    adminCode: map["admin_code"] === undefined ? ADMIN_CODE_DEFAULT : map["admin_code"],
+    // Blank means the testing shortcut is disabled — only the emailed code works.
     fallbackCode: map["fallback_verification_code"] || null,
     resendKey: map["resend_api_key"] || process.env["RESEND_API_KEY"] || null,
     resendOwnerEmail: map["resend_owner_email"] || ADMIN_EMAIL_DEFAULT,
     delivery,
   };
 }
+
 
 function codeHtml(code: string) {
   return `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px">
@@ -160,9 +164,13 @@ export const adminStart = createServerFn({ method: "POST" })
     const supabaseAdmin = await adminClient();
     const cfg = await loadConfig(supabaseAdmin);
 
+    if (!cfg.adminCode) {
+      return { ok: false, message: "No admin panel code is set. A code is required — set one before signing in." };
+    }
     if (data.code !== cfg.adminCode) {
       return { ok: false, message: "Wrong admin panel code." };
     }
+
 
     const token = crypto.randomUUID();
     const verification = sixDigitCode();
@@ -481,6 +489,8 @@ export const adminUpdateSettings = createServerFn({ method: "POST" })
     const supabaseAdmin = await requireAdmin(data.token);
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.adminEmail)) return { ok: false, message: "Enter a valid admin email." };
+    if (!data.adminCode)
+      return { ok: false, message: "A code to open the admin panel is required — you must set one (4–8 digits)." };
     if (!/^\d{4,8}$/.test(data.adminCode)) return { ok: false, message: "Admin panel code must be 4–8 digits." };
     if (data.fallbackCode && !/^\d{4,8}$/.test(data.fallbackCode))
       return { ok: false, message: "Testing verification code must be 4–8 digits (or empty to disable)." };
