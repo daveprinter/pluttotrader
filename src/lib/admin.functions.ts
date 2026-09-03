@@ -45,7 +45,7 @@ function randomCode(len: number) {
 
 const ADMIN_EMAIL_DEFAULT = "vitralparts306@gmail.com";
 const ADMIN_CODE_DEFAULT = "0000";
-const CODE_TTL_MS = 5 * 60_000;
+const CODE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 30_000;
 
 export type EmailDelivery = "resend" | "lovable" | "both";
@@ -150,11 +150,11 @@ function maskEmail(email: string) {
 
 function sentMessage(reached: string[]) {
   return reached.length
-    ? `A 6-digit code was sent to ${reached.join(" and ")}. It expires in 5 minutes.`
+    ? `A 6-digit code was sent to ${reached.join(" and ")}. It expires in 10 minutes.`
     : "Could not send the verification email — check the email settings in the admin panel, use the testing verification code, or try resending.";
 }
 
-/** Step 1 — admin panel code, then a 6-digit verification code is emailed (valid 5 minutes). */
+/** Step 1 — admin panel code, then a 6-digit verification code is emailed (valid 10 minutes). */
 export const adminStart = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => {
     const v = input as { code?: string };
@@ -174,7 +174,9 @@ export const adminStart = createServerFn({ method: "POST" })
 
     const token = crypto.randomUUID();
     const verification = sixDigitCode();
-    await supabaseAdmin.from("admin_sessions").insert({ token, verification_code: verification });
+    await supabaseAdmin
+      .from("admin_sessions")
+      .insert({ token, verification_code: verification, code_sent_at: new Date().toISOString() });
 
     const reached = await sendVerificationEmail(cfg, verification);
     return { ok: true, token, sentTo: reached.length ? reached.join(" and ") : undefined, message: sentMessage(reached) };
@@ -195,7 +197,7 @@ export const adminResendCode = createServerFn({ method: "POST" })
     if (new Date(session.expires_at).getTime() < Date.now())
       return { ok: false, message: "Session expired. Start again." };
 
-    const sinceLast = Date.now() - new Date(session.created_at).getTime();
+    const sinceLast = Date.now() - new Date(session.code_sent_at ?? session.created_at).getTime();
     if (sinceLast < RESEND_COOLDOWN_MS) {
       const retryInMs = RESEND_COOLDOWN_MS - sinceLast;
       return { ok: false, retryInMs, message: `Please wait ${Math.ceil(retryInMs / 1000)}s before resending.` };
@@ -204,16 +206,16 @@ export const adminResendCode = createServerFn({ method: "POST" })
     const verification = sixDigitCode();
     await supabaseAdmin
       .from("admin_sessions")
-      .update({ verification_code: verification, created_at: new Date().toISOString() })
+      .update({ verification_code: verification, code_sent_at: new Date().toISOString() })
       .eq("id", session.id);
 
     const reached = await sendVerificationEmail(await loadConfig(supabaseAdmin), verification);
     return reached.length
-      ? { ok: true, message: `A new code was sent to ${reached.join(" and ")}. It expires in 5 minutes.` }
+      ? { ok: true, message: `A new code was sent to ${reached.join(" and ")}. It expires in 10 minutes.` }
       : { ok: false, message: "Could not send the verification email. Check email settings or try again shortly." };
   });
 
-/** Step 2 — email verification code (must be used within 5 minutes of being sent). */
+/** Step 2 — email verification code (must be used within 10 minutes of being sent). */
 export const adminVerify = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => {
     const v = input as { token?: string; code?: string };
@@ -240,11 +242,14 @@ export const adminVerify = createServerFn({ method: "POST" })
 
     const usedFallback = fallback !== null && data.code === fallback;
     if (!usedFallback) {
-      if (Date.now() - new Date(session.created_at).getTime() > CODE_TTL_MS) {
-        return { ok: false, expired: true, message: "This code has expired. Request a new one." };
-      }
+      // Check the code itself first — a matching code should never be reported as expired
+      // just because of a small clock difference between the app and the database.
       if (data.code !== session.verification_code) {
         return { ok: false, message: "Wrong verification code." };
+      }
+      const sentAt = new Date(session.code_sent_at ?? session.created_at).getTime();
+      if (Number.isFinite(sentAt) && Date.now() - sentAt > CODE_TTL_MS) {
+        return { ok: false, expired: true, message: "This code has expired. Request a new one." };
       }
     }
     await supabaseAdmin.from("admin_sessions").update({ verified: true }).eq("id", session.id);
