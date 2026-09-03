@@ -74,13 +74,17 @@ async function loadConfig(supabaseAdmin: Awaited<ReturnType<typeof adminClient>>
     : "resend") as EmailDelivery;
   return {
     adminEmail: map["admin_email"] || ADMIN_EMAIL_DEFAULT,
-    adminCode: map["admin_code"] || ADMIN_CODE_DEFAULT,
+    // Only fall back to the built-in code when no code was ever configured.
+    // A blank saved value is invalid, never a wildcard.
+    adminCode: map["admin_code"] === undefined ? ADMIN_CODE_DEFAULT : map["admin_code"],
+    // Blank means the testing shortcut is disabled — only the emailed code works.
     fallbackCode: map["fallback_verification_code"] || null,
     resendKey: map["resend_api_key"] || process.env["RESEND_API_KEY"] || null,
     resendOwnerEmail: map["resend_owner_email"] || ADMIN_EMAIL_DEFAULT,
     delivery,
   };
 }
+
 
 function codeHtml(code: string) {
   return `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px">
