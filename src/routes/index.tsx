@@ -43,7 +43,16 @@ import {
 import { DigitGrid } from "@/components/DigitGrid";
 import { cn } from "@/lib/utils";
 import { useInstallPrompt, usePersistentState, useTheme } from "@/hooks/usePluto";
-import { MARKETS, authorizeDeriv, marketLabel, type DerivWS } from "@/lib/deriv";
+import {
+  MARKETS,
+  accountLabel,
+  authorizeDerivAccount,
+  listDerivAccounts,
+  marketLabel,
+  type DerivAccount,
+  type DerivWS,
+} from "@/lib/deriv";
+
 import {
   BotEngine,
   emptyStats,
