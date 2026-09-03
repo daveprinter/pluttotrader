@@ -443,7 +443,9 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
           <div className="mr-auto">
             <h1 className="text-base font-bold leading-tight sm:text-lg">Pluto AI Trader</h1>
             <p className="text-xs text-muted-foreground">
-              {connected ? `${loginid} · ${balance.toFixed(2)} ${currency}` : "Not connected"}
+              {connected
+                ? `${accounts.find((a) => a.id === loginid)?.isDemo === false ? "Real" : "Demo"} · ${loginid} · ${balance.toFixed(2)} ${currency}`
+                : "Not connected"}
             </p>
           </div>
           <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
