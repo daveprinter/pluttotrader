@@ -519,14 +519,50 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 type="password"
-                placeholder="Enter your Deriv PAT token"
+                placeholder="Enter your Deriv token (demo or PAT)"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
               />
-              <Button onClick={handleConnect} disabled={connecting}>
-                {connecting ? "Connecting…" : connected ? "Reconnect" : "Connect"}
+              <Button onClick={() => handleConnect()} disabled={connecting || loadingAccounts}>
+                {loadingAccounts
+                  ? "Loading accounts…"
+                  : connecting
+                    ? "Connecting…"
+                    : connected
+                      ? "Reconnect"
+                      : "Connect"}
               </Button>
             </div>
+            <Input
+              className="mt-2"
+              type="password"
+              placeholder="Optional: second token (e.g. real account API token)"
+              value={altToken}
+              onChange={(e) => setAltToken(e.target.value)}
+            />
+            {accounts.length > 0 && (
+              <div className="mt-3">
+                <Label className="mb-1.5 block text-xs">Account (demo is the default)</Label>
+                <Select value={selectedAccountId} onValueChange={handleAccountChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {accountLabel(a)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {accounts.some((a) => a.isDemo) && accounts.some((a) => !a.isDemo)
+                    ? "Demo and real accounts loaded — switch any time."
+                    : "Only one account type is reachable with these tokens. Add the other token above to switch."}
+                </p>
+              </div>
+            )}
+
             {connected && (
               <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <Stat label="Account" value={loginid} />
