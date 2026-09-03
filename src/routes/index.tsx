@@ -128,6 +128,13 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
 
   // connection
   const [token, setToken, tokenHydrated] = usePersistentState("token", "");
+  const [altToken, setAltToken] = usePersistentState("altToken", "");
+  const [accounts, setAccounts] = usePersistentState<DerivAccount[]>("accounts", []);
+  const [selectedAccountId, setSelectedAccountId, accountHydrated] = usePersistentState(
+    "selectedAccountId",
+    "",
+  );
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [loginid, setLoginid] = useState("");
@@ -135,6 +142,7 @@ function PlutoTrader({ licenseCode, onSignOut }: { licenseCode: string; onSignOu
   const [balance, setBalance] = useState(0);
   const wsRef = useRef<DerivWS | null>(null);
   const engineRef = useRef<BotEngine | null>(null);
+
 
   // market
   const [symbol, setSymbol] = usePersistentState("symbol", "1HZ10V");
